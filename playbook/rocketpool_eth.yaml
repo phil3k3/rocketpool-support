@@ -1,0 +1,52 @@
+---
+- name: Setup User part of Rocketpool
+  block:
+    - name: Create directories in home directory
+      file:
+        path: "/home/eth/{{ item }}"
+        state: directory
+      loop:
+        - bin
+        - .ssh
+
+    - name: Download Rocketpool CLI
+      get_url:
+        url: "https://github.com/rocket-pool/smartnode-install/releases/latest/download/rocketpool-cli-linux-amd64"
+        dest: "/home/eth/bin/rocketpool"
+        mode: '0755'
+        force: false
+
+    - name: Add $HOME/bin to user's PATH
+      lineinfile:
+        path: "/home/eth/.bashrc"
+        line: 'export PATH="/home/eth/bin:$PATH"'
+        insertafter: EOF
+
+    - name: Install Rocketpool service
+      command: "/home/eth/bin/rocketpool service install --yes"
+      args:
+        creates: /home/eth/.rocketpool/templates/node.tmpl
+
+#    - name: Switch to docker group
+#      command: sg docker "newgrp `id -gn`"
+
+    - name: Copy user settings
+      copy:
+        src: user-settings.yml
+        dest: /home/eth/.rocketpool/user-settings.yml
+        owner: eth
+        group: eth
+        mode: u+rw
+        force: false
+
+    - name: Get Rocketpool Monitor network subnet
+      command: 'docker ps rocketpool_monitor-net'
+      register: subnet_result
+      changed_when: false
+
+    - name: Start Rocketpool service
+      command: "/home/eth/bin/rocketpool service start --ignore-slash-timer --yes"
+      when:
+
+
+

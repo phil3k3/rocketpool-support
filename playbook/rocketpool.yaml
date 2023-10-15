@@ -1,0 +1,156 @@
+---
+- hosts: rocketpool
+  become: yes
+  remote_user: root
+  tasks:
+    - name: Create swap file
+      import_tasks: ./configureswap.yml
+      vars:
+        swap_file_path: /swapfile
+        swap_file_size_gb: 16
+        swap_file_fstab_enable: true
+
+    - name: Install htop package
+      apt:
+        name: htop
+        state: present
+
+    - name: Set swappiness and vfs_cache_pressure
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+      with_items:
+        - { name: "vm.swappiness", value: 6 }
+        - { name: "vm.vfs_cache_pressure", value: 10 }
+
+    - name: Add swappiness and vfs_cache_pressure to /etc/sysctl.conf
+      blockinfile:
+        path: /etc/sysctl.conf
+        block: |
+          vm.swappiness=6
+          vm.vfs_cache_pressure=10
+
+    - name: change default shell to bash
+      ansible.builtin.debconf:
+        name: dash/sh
+        question: dash/sh
+        value: "false"
+        vtype: "boolean"
+
+    - name: Create user 'eth'
+      user:
+        name: eth
+        home: /home/eth
+        createhome: yes
+
+    - name: Set password for 'eth'
+      user:
+        name: eth
+        password: "{{ 'eth' | password_hash('sha512', 'mysecretsalt') }}"
+
+    - name: Allow 'eth' to run sudo without a password
+      lineinfile:
+        dest: /etc/sudoers.d/eth
+        line: 'eth ALL=(ALL:ALL) NOPASSWD:ALL'
+        create: yes
+        mode: '0440'
+
+    - name: copy authorized keys
+      copy:
+        src: ~/.ssh/id_ecdsa.pub
+        dest: /home/eth/.ssh/authorized_keys
+        owner: eth
+        group: eth
+        mode: u+rw
+
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+
+    - name: Install unattended-upgrades and update-notifier-common
+      apt:
+        name:
+          - unattended-upgrades
+          - update-notifier-common
+        state: present
+
+    - name: Configure automatic updates
+      template:
+        src: 20auto-upgrades.j2
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+
+    - name: Restart unattended-upgrades service
+      systemd:
+        name: unattended-upgrades
+        state: restarted
+
+    - name: Configure UFW
+      ufw:
+        rule: "{{ item.rule }}"
+        comment: "{{ item.comment }}"
+        proto: "{{ item.proto }}"
+        direction: "in"
+        to_port: "{{ item.to_port }}"
+        state: enabled
+        insert: "{{ item.insert }}"
+      with_items:
+        - { rule: "allow", proto: "tcp", to_port: "22", comment: "Allow SSH", insert: 1 }
+        - { rule: "allow", proto: "tcp", to_port: "30303", comment: "Execution client port, standardized by Rocket Pool", insert: 2  }
+        - { rule: "allow", proto: "udp", to_port: "30303", comment: "Execution client port, standardized by Rocket Pool", insert: 3  }
+        - { rule: "allow", proto: "tcp", to_port: "9001", comment: "Consensus client port, standardized by Rocket Pool", insert: 4  }
+        - { rule: "allow", proto: "udp", to_port: "9001", comment: "Consensus client port, standardized by Rocket Pool", insert: 5  }
+        - { rule: "allow", proto: "tcp", to_port: "3100", comment: "Allow grafana from anywhere", insert: 6 }
+        - { rule: "deny",  proto: "any", to_port: "", comment: "Deny all incoming traffic", insert: 7 }
+
+    - name: Setup Rocketpool
+      import_tasks: ./rocketpool_eth.yaml
+      remote_user: eth
+      become_user: eth
+      become: yes
+
+    - name: Get Rocketpool Monitor network subnet
+      command: 'docker inspect rocketpool_monitor-net'
+      register: subnet_result
+      changed_when: false
+
+    - name: Convert JSON String to JSON Object
+      set_fact:
+        json_data: "{{ subnet_result.stdout | from_json }}"
+
+    - name: Allow Prometheus access to Node Exporter
+      ufw:
+        rule: "allow"
+        src: "{{ json_data[0].IPAM.Config[0].Subnet }}"
+        to_port: "9103"
+        comment: "Allow prometheus access to node-exporter"
+        state: enabled
+
+#    - name: Add Tailscale APT key
+#      get_url:
+#        url: https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg
+#        force: true
+#        dest: /etc/apt/keyrings/jammy.noarmor.gpg
+#
+#    - name: Add Tailscale APT repository
+#      apt_repository:
+#        repo: "deb [signed-by=/etc/apt/keyrings/jammy.noarmor.gpg] https://pkgs.tailscale.com/stable/ubuntu jammy main"
+#        state: present
+#
+#    - name: Install Tailscale
+#      apt:
+#        name: tailscale
+#        state: present
+#
+#    - name: Initialize and start Tailscale
+#      command: tailscale up
+#
+#    - name: Disable root login via SSH
+#      lineinfile:
+#        path: /etc/ssh/sshd_config
+#        line: 'PermitRootLogin no'
+#
+#    - name: Enable pubkey authentication via SSH
+#      lineinfile:
+#        path: /etc/ssh/sshd_config
+#        line: 'PubkeyAuthentication yes

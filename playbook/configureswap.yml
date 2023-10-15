@@ -1,0 +1,51 @@
+# Enable swap file and fstab entry. Add the following values to host/group_vars or whatever
+# swap_file_path: path to swap file
+# swap_file_size_gb: size in GB of the swap file
+# swap_file_fstab_enable: whether or not to set an entry in fstab. Swap files can be enabled in other ways, so we don't
+#   assume.
+- name: Configure Swap File Block
+  when: swap_file_path is defined and swap_file_path
+  block:
+
+    - name: Get Swap File Stats
+      stat:
+        path: '{{ swap_file_path }}'
+      register: swap_file_stats
+
+    - name: Modify Swap File Block
+      when: >-
+        ( swap_file_stats.stat.exists and swap_file_stats.stat.size != swap_file_size_gb * 1073741824 )
+        or not swap_file_stats.stat.exists
+      block:
+
+        - name: Disable Existing Swap File
+          command:
+            cmd: 'swapoff {{ swap_file_path }}'
+          when: swap_file_stats.stat.exists
+          # The swap file may exist, but not be enabled
+          failed_when: no
+          changed_when: no
+
+        - name: Modify Swap File
+          command:
+            cmd: 'dd if=/dev/zero of={{ swap_file_path }} bs=1G count={{ swap_file_size_gb }}'
+
+        - name: Configure Swap File Permissions
+          file:
+            path: '{{ swap_file_path }}'
+            owner: root
+            group: root
+            mode: u=rw,g=,o=
+
+        - name: Enable Swap File
+          shell:
+            cmd: 'mkswap {{ swap_file_path }} && swapon {{ swap_file_path }}'
+          changed_when: no
+
+        - name: Configure Swap File fstab Entry
+          mount:
+            name: none
+            src: "{{ swap_file_path }}"
+            fstype: swap
+            opts: sw
+            state: "{% if swap_file_fstab_enable is defined and swap_file_fstab_enable %}present{% else %}absent{% endif %}"

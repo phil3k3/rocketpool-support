@@ -1,1 +1,3 @@
 **/.idea/**
+/inventory.ini
+/rocketpool-venv/
