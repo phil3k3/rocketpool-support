@@ -23,5 +23,7 @@ manually to disable root access. This is to avoid the script from locking itself
 and your local machine:
 
 ```cat tailscale.sh | ssh root@<ROCKETPOOL_IP_ADDRESS> 'bash -' ```
+
+For details, refer to [https://rocketpool.net/](https://docs.rocketpool.net/)
    
 
